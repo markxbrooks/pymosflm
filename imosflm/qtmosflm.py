@@ -80,7 +80,7 @@ class IMosflmApp(QMainWindow):
             if file_path.lower().endswith('.cbf'):
                 self.display_cbf_image(file_path)
             if file_path.lower().endswith('.h5'):
-                self.display_cbf_image(file_path)
+                self.display_hdf5_image(file_path)
             else:
                 self.display_image(file_path)
 
@@ -106,22 +106,78 @@ class IMosflmApp(QMainWindow):
                 # Print available datasets
                 print("Available datasets:", list(f.keys()))
 
-                # Attempt to find an image dataset
-                dataset_path = "/entry/data/data"  # Change if necessary
+                # Specify the dataset path (adjust as necessary)
+                dataset_path = "/entry/data/data_000001"
+
+                # Check if the dataset path exists
                 if dataset_path not in f:
                     raise ValueError(f"Dataset '{dataset_path}' not found in {image_path}")
 
-                # Load image data
-                image_data = f[dataset_path][...]
+                # Assuming the data is stored in slabs or chunks
+                dataset = f[dataset_path]
 
-                # Convert to 8-bit grayscale image
+                # If the dataset is large, use a slab (slice) approach to read in chunks
+                image_data = dataset[0:1000]  # Read a slab (adjust the slicing as needed)
+
+                # Convert the data to 8-bit grayscale if needed
                 image_data = np.array(image_data, dtype=np.uint8)
-                pil_image = Image.fromarray(image_data)
+
+                # Ensure it's 2D and then convert to a PIL image
+                if image_data.ndim == 2:
+                    pil_image = Image.fromarray(image_data)
+                else:
+                    raise ValueError("Image data is not 2D.")
+
                 # Store and display the image
                 self.current_image = pil_image
                 self.show_image(self.current_image)
         except Exception as ex:
             print(f"Error {ex} occurred")
+
+    def display_hdf5_image_old(self, image_path):
+        """Load and display an HDF5 image dataset slice (slab)."""
+        try:
+            with h5py.File(image_path, "r") as f:
+                # Print available datasets
+                print("Available datasets:", list(f.keys()))
+
+                # Attempt to find the image dataset (adjust as needed)
+                dataset_path = "/entry/data/data_000001"  # Adjust based on actual dataset path
+
+                # Check if the dataset exists
+                if dataset_path not in f:
+                    raise ValueError(f"Dataset '{dataset_path}' not found in {image_path}")
+
+                # Open the dataset
+                dataset = f[dataset_path]
+                print(f"Dataset shape: {dataset.shape}, Chunk size: {dataset.chunks}")
+
+                # Determine the slab size (this may need adjustment based on dataset)
+                total_slices = dataset.shape[0]
+                slab_size = 1  # If you want to read one slab at a time
+
+                # Read one slab at a time (for example, reading the first slice)
+                for i in range(0, total_slices, slab_size):
+                    slab = dataset[i:i + slab_size]  # Read the slab (slice)
+
+                    # Remove the extra dimension (1, 4362, 4148) becomes (4362, 4148)
+                    slab_data = np.squeeze(slab)
+
+                    # Ensure the image is in 2D format
+                    if slab_data.ndim == 2:
+                        pil_image = Image.fromarray(slab_data.astype(np.uint8))  # Convert to 8-bit image
+                    else:
+                        raise ValueError(f"Unexpected slab shape: {slab_data.shape}. Expected 2D.")
+
+                    # Store and display the image
+                    self.current_image = pil_image
+                    self.show_image(self.current_image)
+
+                    print(f"Slab {i} displayed.")
+
+        except Exception as ex:
+            # Handling errors
+            print(f"Error: {ex}")
 
     def show_image(self, image):
         image = image.convert("RGB")
