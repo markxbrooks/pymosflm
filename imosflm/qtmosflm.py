@@ -12,6 +12,7 @@ import fabio  # Import FabIO
 import matplotlib.pyplot as plt
 import cv2
 import numpy as np
+# from image_grouping import *
 
 # Set environment variables
 os.environ['MAINTAINER'] = 'mosflm@mrc-lmb.cam.ac.uk'
@@ -107,32 +108,55 @@ class IMosflmApp(QMainWindow):
                 print("Available datasets:", list(f.keys()))
 
                 # Specify the dataset path (adjust as necessary)
-                dataset_path = "/entry/data/data_000001"
+                dataset_path = "/entry/data"
 
                 # Check if the dataset path exists
                 if dataset_path not in f:
                     raise ValueError(f"Dataset '{dataset_path}' not found in {image_path}")
 
-                # Assuming the data is stored in slabs or chunks
-                dataset = f[dataset_path]
+                # Get the group under the dataset_path
+                group = f[dataset_path]
 
-                # If the dataset is large, use a slab (slice) approach to read in chunks
-                image_data = dataset[0:1000]  # Read a slab (adjust the slicing as needed)
+                # List all the datasets under the group
+                print(f"Listing datasets under '{dataset_path}':")
+                for name, item in group.items():
+                    # Check if the item is a dataset
+                    if isinstance(item, h5py.Dataset):
+                        print(f"Dataset: {name} - Shape: {item.shape}")
+                        dataset = item
+                    else:
+                        print(f"Group: {name}")
 
-                # Convert the data to 8-bit grayscale if needed
-                image_data = np.array(image_data, dtype=np.uint8)
+                # Choose a slice (2D image) from the 3D dataset
+                if dataset.ndim == 3:
+                    # Check the size of the first dimension and choose an appropriate slice
+                    num_frames = dataset.shape[0]
+                    print(f"Dataset has {num_frames} frames.")
 
-                # Ensure it's 2D and then convert to a PIL image
-                if image_data.ndim == 2:
-                    pil_image = Image.fromarray(image_data)
+                    # Example: Select the first slice (first index of the 3D array)
+                    slice_index = 0  # Change this index to pick a different slice
+                    if slice_index < num_frames:
+                        image_data = dataset[slice_index, :, :]
+                    else:
+                        raise IndexError(f"Slice index {slice_index} is out of bounds for this dataset.")
+
+                    # Convert the data to 8-bit grayscale if needed
+                    image_data = np.array(image_data, dtype=np.uint8)
+
+                    # Ensure it's 2D and then convert to a PIL image
+                    if image_data.ndim == 2:
+                        pil_image = Image.fromarray(image_data)
+                    else:
+                        raise ValueError("Image data is not 2D.")
                 else:
-                    raise ValueError("Image data is not 2D.")
+                    raise ValueError("Dataset does not have 3 dimensions or is not an image.")
 
                 # Store and display the image
                 self.current_image = pil_image
                 self.show_image(self.current_image)
+
         except Exception as ex:
-            print(f"Error {ex} occurred")
+            print(f"Error: {ex} occurred")
 
     def display_hdf5_image_old(self, image_path):
         """Load and display an HDF5 image dataset slice (slab)."""
