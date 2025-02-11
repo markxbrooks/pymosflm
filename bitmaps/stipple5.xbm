@@ -1,0 +1,5 @@
+/* $Id: stipple5.xbm,v 1.1.1.1 2006/08/21 11:19:59 harry Exp $ */
+#define check3x3_width 6
+#define check3x3_height 6
+static unsigned char check3x3_bits[] = {
+   0x07, 0x07, 0x07, 0x38, 0x38, 0x38 };

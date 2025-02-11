@@ -1,0 +1,6 @@
+/* $Id: circle.xbm,v 1.1.1.1 2006/08/21 11:19:59 harry Exp $ */
+/* Created with The GIMP */
+#define circle_width 7
+#define circle_height 7
+static unsigned char circle_bits[] = {
+   0x1c, 0x3e, 0x7f, 0x7f, 0x7f, 0x3e, 0x1c };

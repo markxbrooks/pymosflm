@@ -1,0 +1,5 @@
+/* $Id: stipple1.xbm,v 1.1.1.1 2006/08/21 11:19:59 harry Exp $ */
+#define stipple1_width 5
+#define stipple1_height 5
+static unsigned char stipple1_bits[] = {
+   0x11, 0x03, 0x06, 0x0c, 0x18 };

@@ -1,0 +1,5 @@
+/* $Id: bbox.xbm,v 1.1.1.1 2006/08/21 11:19:59 harry Exp $ */
+#define bbox_width 5
+#define bbox_height 5
+static unsigned char bbox_bits[] = {
+   0x00, 0x00, 0x00, 0x00, 0x00 };

@@ -1,0 +1,5 @@
+/* $Id: backstop.xbm,v 1.1.1.1 2006/08/21 11:19:59 harry Exp $ */
+#define backstop_width 5
+#define backstop_height 5
+static unsigned char backstop_bits[] = {
+   0x0a, 0x11, 0x00, 0x11, 0x0a };

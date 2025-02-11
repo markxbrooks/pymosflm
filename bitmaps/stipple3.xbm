@@ -1,0 +1,6 @@
+/* $Id: stipple3.xbm,v 1.1.1.1 2006/08/21 11:19:58 harry Exp $ */
+/* Created with The GIMP */
+#define stipple3_width 5
+#define stipple3_height 5
+static unsigned char stipple3_bits[] = {
+   0x00, 0x00, 0x1f, 0x00, 0x00 };

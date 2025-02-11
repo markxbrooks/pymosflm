@@ -1,0 +1,5 @@
+/* $Id: histo_stipple_0.xbm,v 1.1.1.1 2006/08/21 11:19:58 harry Exp $ */
+#define histo_stipple_0_width 1
+#define histo_stipple_0_height 1
+static unsigned char histo_stipple_0_bits[] = {
+   0x01 };
