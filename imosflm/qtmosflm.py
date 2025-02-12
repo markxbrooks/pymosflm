@@ -100,8 +100,43 @@ class IMosflmApp(QMainWindow):
         except Exception as e:
             print(f"Failed to load CBF image: {e}")
 
-    def display_hdf5_image(self, image_path):
-        """Load and display an HDF5 image."""
+    def display_hdf5_image(self, h5_file_path):
+        """Load and display the first image from an HDF5 dataset."""
+        try:
+            dataset_name = "/entry/data/data_000001"
+            with h5py.File(h5_file_path, 'r') as h5_file:
+                if dataset_name not in h5_file:
+                    raise ValueError(f"Dataset '{dataset_name}' not found in {h5_file_path}")
+
+                dataset = h5_file[dataset_name]
+                print(f"Loaded dataset '{dataset_name}' with shape {dataset.shape}")
+
+                # Check if the dataset is 3D
+                if dataset.ndim == 3:
+                    # Select the first slice (first image)
+                    first_image_data = dataset[0, :, :]
+                else:
+                    raise ValueError("Dataset is not 3D.")
+
+            # Normalize data to 0-255 for image creation
+            first_image_normalized = ((first_image_data - np.min(first_image_data)) / 
+                                      (np.max(first_image_data) - np.min(first_image_data)) * 255).astype(np.uint8)
+            print(f"First image data normalized to 8-bit range.")
+
+            # Create a PIL image from the first slice
+            image = Image.fromarray(first_image_normalized)
+
+            self.current_image = image
+            self.show_image(self.current_image)
+            print("First image displayed successfully.")
+            return image
+
+        except Exception as ex:
+            print(f"Error: {ex} occurred")
+
+    """ 
+    def display_hdf5_image_new(self, image_path):
+        ""Load and display an HDF5 image.""
         try:
             with h5py.File(image_path, "r") as f:
                 # Print available datasets
@@ -159,7 +194,7 @@ class IMosflmApp(QMainWindow):
             print(f"Error: {ex} occurred")
 
     def display_hdf5_image_old(self, image_path):
-        """Load and display an HDF5 image dataset slice (slab)."""
+        ""Load and display an HDF5 image dataset slice (slab).""
         try:
             with h5py.File(image_path, "r") as f:
                 # Print available datasets
@@ -202,6 +237,7 @@ class IMosflmApp(QMainWindow):
         except Exception as ex:
             # Handling errors
             print(f"Error: {ex}")
+    """
 
     def show_image(self, image):
         image = image.convert("RGB")
@@ -243,6 +279,7 @@ class IMosflmApp(QMainWindow):
         if self.current_image:
             self.show_image(self.current_image)
         super().resizeEvent(event)
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='iMosflm Application')
