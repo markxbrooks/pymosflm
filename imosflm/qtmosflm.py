@@ -11,7 +11,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import h5py
-from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QPushButton, QTextEdit, QWidget
+from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QPushButton, QTextEdit, QWidget, QComboBox
 from PySide6.QtGui import QImage, QPixmap, QPalette, QColor
 from PySide6.QtCore import Qt, QSize
 
@@ -83,6 +83,7 @@ class IMosflmApp(QMainWindow):
         self.setWindowTitle("iMosflm")
         self.setGeometry(100, 100, 800, 1000)
         self.current_image = None
+        self.current_file = None
         self.dataset = None
         self.num_frames = 0
         self.slice_size = 10  # Number of frames to load at once
@@ -94,13 +95,29 @@ class IMosflmApp(QMainWindow):
 
         # Image display
         self.image_label = QLabel("No image loaded")
+        self.image_label.setMinimumHeight(700)  # Set minimum height for the image label
         layout.addWidget(self.image_label)
 
-        # Slider to select frames
-        self.frame_slider = QSlider(Qt.Orientation.Horizontal)
-        self.frame_slider.setOrientation(Qt.Orientation.Horizontal)  # Horizontal slider
+        # Dataset selection
+        dataset_layout = QHBoxLayout()
+        dataset_label = QLabel("Dataset")
+        dataset_layout.addWidget(dataset_label)
+        
+        self.dataset_combo = QComboBox()
+        self.dataset_combo.currentIndexChanged.connect(self.change_dataset)
+        dataset_layout.addWidget(self.dataset_combo)
+        layout.addLayout(dataset_layout)
+
+        # Frame slider and label
+        frame_layout = QHBoxLayout()
+        self.frame_slider = QSlider(Qt.Horizontal)
+        self.frame_slider.setFixedHeight(20)  # Set fixed height for the slider
         self.frame_slider.valueChanged.connect(self.update_frame)
-        layout.addWidget(self.frame_slider)
+        frame_layout.addWidget(self.frame_slider)
+
+        self.frame_label = QLabel("Frame: 0")
+        frame_layout.addWidget(self.frame_label)
+        layout.addLayout(frame_layout)
 
         # Buttons
         button_layout = QHBoxLayout()
@@ -118,12 +135,18 @@ class IMosflmApp(QMainWindow):
         histogram_button.clicked.connect(self.show_histogram)
         button_layout.addWidget(histogram_button)
 
-        # Contrast slider
+        # Contrast slider and label
+        contrast_layout = QHBoxLayout()
         self.contrast_slider = QSlider(Qt.Horizontal)
+        self.contrast_slider.setFixedHeight(20)  # Set fixed height for the slider
         self.contrast_slider.setRange(50, 300)
         self.contrast_slider.setValue(100)
         self.contrast_slider.valueChanged.connect(self.update_contrast)
-        layout.addWidget(self.contrast_slider)
+        contrast_layout.addWidget(self.contrast_slider)
+
+        self.contrast_label = QLabel("Contrast: 100")
+        contrast_layout.addWidget(self.contrast_label)
+        layout.addLayout(contrast_layout)
 
     def open_file(self):
         """
@@ -133,10 +156,11 @@ class IMosflmApp(QMainWindow):
         """
         file_path, _ = QFileDialog.getOpenFileName(self, "Open Image", "", "Image Files (*.jpg *.png *.gif *.tif *.tiff *.cbf *.h5)")
         if file_path:
+            self.current_file = file_path
             logging.info(f"file_path: {file_path}")
             if file_path.lower().endswith('.cbf'):
                 self.display_cbf_image(file_path)
-            if file_path.lower().endswith('.h5'):
+            elif file_path.lower().endswith('.h5'):
                 self.load_hdf5_image(file_path)
             else:
                 self.display_image(file_path)
@@ -165,6 +189,7 @@ class IMosflmApp(QMainWindow):
 
     def load_hdf5_image(self, image_path):
         """Load and display an HDF5 image stack."""
+        """ hello"""
         try:
             with h5py.File(image_path, "r") as f:
                 dataset_path = "/entry/data"
@@ -172,26 +197,42 @@ class IMosflmApp(QMainWindow):
                     raise ValueError(f"Dataset '{dataset_path}' not found in {image_path}")
 
                 group = f[dataset_path]
-                self.dataset = None
+                datasets = [name for name in group.keys() if isinstance(group[name], h5py.Dataset)]
+                if not datasets:
+                    raise ValueError("No datasets found under '/entry/data'")
 
-                for name, item in group.items():
-                    if isinstance(item, h5py.Dataset):
-                        self.dataset = item
-                        break
+                # Populate the combo box with dataset names
+                self.dataset_combo.clear()
+                self.dataset_combo.addItems(datasets)
 
-                if self.dataset is None or self.dataset.ndim != 3:
-                    raise ValueError("Dataset does not have 3 dimensions or is not an image.")
-
+                # Select the first dataset
+                self.dataset = group[datasets[0]]
                 self.num_frames = self.dataset.shape[0]
-                self.frame_slider.setMaximum(self.num_frames - self.slice_size)
-                self.update_frame(0)
+
+                # Configure slider range
+                self.frame_slider.setMinimum(0)
+                self.frame_slider.setMaximum(self.num_frames - 1)
+
+                # Load the first frame
+                self.display_hdf5_image(0)
         except Exception as ex:
             logging.error(f"Error: {ex} occurred")
+
+    def change_dataset(self, index):
+        """Change the dataset based on the combo box selection."""
+        dataset_name = self.dataset_combo.itemText(index)
+        with h5py.File(self.current_file, "r") as f:
+            dataset_path = f"/entry/data/{dataset_name}"
+            self.dataset = f[dataset_path]
+            self.num_frames = self.dataset.shape[0]
+            self.frame_slider.setMaximum(self.num_frames - 1)
+            self.display_hdf5_image(0)
 
     def update_frame(self, start_index):
         """ update_frame """
         if self.dataset is not None:
             self.display_hdf5_image(start_index)
+            self.frame_label.setText(f"Frame: {start_index}")
 
     def display_hdf5_image(self, start_index):
         """Display a slice of frames from the HDF5 dataset with improved contrast and no white borders."""
@@ -292,14 +333,12 @@ class IMosflmApp(QMainWindow):
         """ update_contrast """
         logging.info(f"update_contrast: {value}")
         if self.current_image:
-            try:
-                contrast_factor = value / 100.0
-                enhancer = ImageEnhance.Contrast(self.current_image)
-                adjusted_image = enhancer.enhance(contrast_factor)
-                self.current_image = adjusted_image
-                self.show_image(adjusted_image)
-            except Exception as ex:
-                logging.error(f"Error: {ex} occurred")
+            contrast_factor = value / 100.0
+            enhancer = ImageEnhance.Contrast(self.current_image)
+            adjusted_image = enhancer.enhance(contrast_factor)
+            self.current_image = adjusted_image
+            self.show_image(adjusted_image)
+            self.contrast_label.setText(f"Contrast: {value}")
 
     def show_histogram(self):
         """ show_histogram """
