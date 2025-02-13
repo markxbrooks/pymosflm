@@ -12,8 +12,8 @@ from pathlib import Path
 
 import h5py
 from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QPushButton, QTextEdit, QWidget, QComboBox
-from PySide6.QtGui import QImage, QPixmap, QPalette, QColor
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QImage, QPixmap, QPalette, QColor, QPainter, QPen
+from PySide6.QtCore import Qt, QSize, QPoint
 
 from PIL import Image, ImageTk, ImageOps, ImageEnhance
 import fabio  # Import FabIO
@@ -45,41 +45,106 @@ if fastload:
     logging.debug("fastload mode: ON")
 
 
-def remove_white_frames(image):
-    """Remove white frames from an image by detecting the largest black region."""
-    # Convert PIL image to a NumPy array
-    image_cv = np.array(image)
+def compute_theta_and_resolution(pixel_x, pixel_y, metadata):
+    """
+    Compute the scattering angle (theta) and resolution at a given pixel.
 
-    # Ensure image has 3 channels (convert grayscale to RGB)
-    if len(image_cv.shape) == 2:  # Grayscale image
-        gray = image_cv  # Use directly
-    else:
-        gray = cv2.cvtColor(image_cv, cv2.COLOR_RGB2GRAY)  # Convert RGB to grayscale
+    Parameters:
+        pixel_x (float): X-coordinate of the pixel
+        pixel_y (float): Y-coordinate of the pixel
+        metadata (dict): Dictionary containing extracted instrument parameters
 
-    # Apply binary thresholding (white to 255, black to 0)
-    _, thresh = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY)
+    Returns:
+        theta (float): Scattering angle in degrees
+        resolution (float): Resolution in Ångstroms
+    """
+    # Extract required parameters
+    beam_center_x = metadata["beam_centre_x"]  # Beam center X (in pixels)
+    beam_center_y = metadata["beam_centre_y"]  # Beam center Y (in pixels)
+    detector_distance = metadata["detector_distance"][0]  # Distance in mm
+    wavelength = metadata["incident_wavelength"]  # X-ray wavelength in Å
+    pixel_size = metadata["x_pixel_size"]  # Pixel size in mm
 
-    # Invert the image (black becomes white, white becomes black)
-    thresh_inv = cv2.bitwise_not(thresh)
+    # Convert pixel coordinates to mm distances from beam center
+    delta_x = (pixel_x - beam_center_x) * pixel_size
+    delta_y = (pixel_y - beam_center_y) * pixel_size
 
-    # Find contours (outlines of objects)
-    contours, _ = cv2.findContours(thresh_inv, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Compute R (distance from beam center to the pixel in mm)
+    R = np.sqrt(delta_x ** 2 + delta_y ** 2)
 
-    if contours:
-        # Find bounding box around the largest detected black region
-        x, y, w, h = cv2.boundingRect(max(contours, key=cv2.contourArea))
+    # Compute theta in radians
+    theta_rad = np.arctan(R / detector_distance)
 
-        # Crop the image to the bounding box
-        cropped = image_cv[y:y+h, x:x+w]
+    # Convert theta to degrees
+    theta_deg = np.degrees(theta_rad)
 
-        # Convert back to PIL image
-        return Image.fromarray(cropped)
+    # Compute resolution using Bragg's Law
+    resolution = wavelength / (2 * np.sin(theta_rad))
 
-    return image  # Return original if no contours found
+    return theta_deg, resolution
+
+
+import h5py
+import numpy as np
+
+def extract_nx_class_and_omega(hdf5_path):
+    """Extract and print NX_class and omega attributes from an HDF5 file, searching all levels."""
+    try:
+        with h5py.File(hdf5_path, "r") as f:
+            logging.info("\n--- Checking for NX_class and Omega ---")
+
+            def search_attributes(group, path=""):
+                for name, item in group.items():
+                    full_path = f"{path}/{name}" if path else name
+
+                    # Ensure the item has attributes before accessing
+                    if isinstance(item, (h5py.Group, h5py.Dataset)) and hasattr(item, "attrs"):
+                        for attr, value in item.attrs.items():
+                            if attr == "NX_class":
+                                logging.info(f"NX_class found in {full_path}: {value}")
+
+                            if attr == "axes":
+                                # Ensure value is properly handled (array vs. scalar)
+                                if isinstance(value, (bytes, str)):
+                                    if b"omega" in value.encode() if isinstance(value, str) else value:
+                                        logging.info(f"Omega axis found in {full_path}: {value}")
+                                elif isinstance(value, (list, tuple, np.ndarray)):
+                                    if any(b"omega" in str(v).encode() if isinstance(v, str) else v for v in value):
+                                        logging.info(f"Omega axis found in {full_path}: {value}")
+
+                    # Recursively search deeper levels
+                    if isinstance(item, h5py.Group):
+                        search_attributes(item, full_path)
+
+            # Start recursive search from root
+            search_attributes(f)
+
+            # Checking specific metadata for important sections
+            metadata_paths = [
+                "/entry/data",
+                "/entry/instrument/detector",
+                "/entry/instrument"
+            ]
+
+            for meta_path in metadata_paths:
+                if meta_path in f:
+                    logging.info(f"\n--- Checking {meta_path} Attributes ---")
+                    for attr, value in f[meta_path].attrs.items():
+                        logging.info(f"{attr}: {value}")
+
+    except Exception as ex:
+        logging.info(f"Error: {ex} occurred")
+
 
 class IMosflmApp(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.beam_x = None
+        self.beam_y = None
+        self.detector_distance = 200
+        self.incident_wavelength = None
+        self.x_pixel_size = 0.075
+        self.y_pixel_size = 0.075
         self.setWindowTitle("iMosflm")
         self.setGeometry(100, 100, 800, 1000)
         self.current_image = None
@@ -87,16 +152,18 @@ class IMosflmApp(QMainWindow):
         self.dataset = None
         self.num_frames = 0
         self.slice_size = 10  # Number of frames to load at once
+        self.beam_center = None
 
         # Main widget and layout
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
         layout = QVBoxLayout(main_widget)
 
-        # Image display
-        self.image_label = QLabel("No image loaded")
-        self.image_label.setMinimumHeight(700)  # Set minimum height for the image label
-        layout.addWidget(self.image_label)
+        # Resolution display
+        resolution_layout = QHBoxLayout()
+        self.resolution_label = QLabel("Resolution: N/A")
+        resolution_layout.addWidget(self.resolution_label)
+        layout.addLayout(resolution_layout)
 
         # Dataset selection
         dataset_layout = QHBoxLayout()
@@ -107,6 +174,13 @@ class IMosflmApp(QMainWindow):
         self.dataset_combo.currentIndexChanged.connect(self.change_dataset)
         dataset_layout.addWidget(self.dataset_combo)
         layout.addLayout(dataset_layout)
+
+        # Image display
+        self.image_label = QLabel("No image loaded")
+        self.image_label.setMinimumHeight(700)  # Set minimum height for the image label
+        self.image_label.setMouseTracking(True)
+        self.image_label.mouseMoveEvent = self.mouse_move_event
+        layout.addWidget(self.image_label)
 
         # Frame slider and label
         frame_layout = QHBoxLayout()
@@ -161,6 +235,8 @@ class IMosflmApp(QMainWindow):
             if file_path.lower().endswith('.cbf'):
                 self.display_cbf_image(file_path)
             elif file_path.lower().endswith('.h5'):
+                # extract_nx_class_and_omega(file_path)
+                self.extract_instrument_metadata(file_path)
                 self.load_hdf5_image(file_path)
             else:
                 self.display_image(file_path)
@@ -176,6 +252,58 @@ class IMosflmApp(QMainWindow):
             logging.error(f"Error displaying image: {e}")
             logging.debug(f"Failed to load image: {e}")
 
+    def traverse_hdf5(self, group, path):
+        """Recursively print attributes and datasets in an HDF5 group."""
+        # Print attributes of the current group
+        if group.attrs:
+            logging.info(f"\nAttributes in {path}:")
+            for attr, value in group.attrs.items():
+                logging.info(f"  {attr}: {value}")
+
+        # Iterate through datasets and subgroups
+        for name, item in group.items():
+            full_path = f"{path}/{name}"
+
+            if isinstance(item, h5py.Group):  # If it's a subgroup, recurse
+                logging.info(f"\n--- Entering {full_path} ---")
+                self.traverse_hdf5(item, full_path)
+
+            elif isinstance(item, h5py.Dataset):  # If it's a dataset, print its value
+                try:
+                    value = item[()]  # Extract dataset value
+
+                    if full_path == r"/entry/instrument/detector/beam_centre_x":
+                        self.beam_x = value
+                    elif full_path == r"/entry/instrument/detector/beam_centre_y":
+                        self.beam_y = value
+                    elif full_path == r"/entry/instrument/detector/detector_distance":
+                        self.detector_distance = value
+                    elif full_path == r"/entry/instrument/beam/incident_wavelength":
+                        self.incident_wavelength = value
+                    elif full_path == r"/entry/instrument/detector/x_pixel_size":
+                        self.x_pixel_size = value
+                    elif full_path == r"/entry/instrument/detector/y_pixel_size":
+                        self.y_pixel_size = value
+                    logging.info(f"{full_path}: {value}")
+
+                except Exception as e:
+                    logging.info(f"Could not read {full_path}: {e}")
+
+    def extract_instrument_metadata(self, hdf5_path):
+        """Recursively extract and print all metadata from /entry/instrument in an HDF5 file."""
+        try:
+            with h5py.File(hdf5_path, "r") as f:
+                instrument_path = "/entry/instrument"
+
+                if instrument_path in f:
+                    logging.info(f"\n--- Extracting Metadata from {instrument_path} ---")
+                    self.traverse_hdf5(f[instrument_path], instrument_path)
+                else:
+                    logging.info(f"Path '{instrument_path}' not found in the HDF5 file.")
+
+        except Exception as ex:
+            logging.info(f"Error: {ex} occurred")
+
     def display_cbf_image(self, file_path):
         """ display_cbf_image """
         try:
@@ -188,8 +316,7 @@ class IMosflmApp(QMainWindow):
             logging.error(f"Failed to load CBF image: {e}")
 
     def load_hdf5_image(self, image_path):
-        """Load and display an HDF5 image stack."""
-        """ hello"""
+        """Load and display an HDF5 image stack with metadata extraction."""
         try:
             with h5py.File(image_path, "r") as f:
                 dataset_path = "/entry/data"
@@ -200,6 +327,30 @@ class IMosflmApp(QMainWindow):
                 datasets = [name for name in group.keys() if isinstance(group[name], h5py.Dataset)]
                 if not datasets:
                     raise ValueError("No datasets found under '/entry/data'")
+
+                # Extract beam center
+                detector_path = "/entry/instrument/detector"
+                if detector_path in f:
+                    detector_group = f[detector_path]
+                    print("Detector attributes:", list(detector_group.attrs.keys()))  # Debugging line
+
+                    # Print all attributes for debugging
+                    for attr, value in detector_group.attrs.items():
+                        print(f"{attr}: {value}")
+
+                    # Attempt to get beam center
+                    # beam_centre_x = detector_group.attrs.get("beam_centre_x", None)
+                    # beam_centre_y = detector_group.attrs.get("beam_centre_y", None)
+
+                    beam_centre_x = self.beam_x
+                    beam_centre_y = self.beam_y
+
+                    if beam_centre_x is None or beam_centre_y is None:
+                        raise ValueError("Beam center coordinates not found.")
+                else:
+                    raise ValueError(f"Detector path '{detector_path}' not found.")
+
+                self.beam_center = (beam_centre_x, beam_centre_y)
 
                 # Populate the combo box with dataset names
                 self.dataset_combo.clear()
@@ -216,7 +367,7 @@ class IMosflmApp(QMainWindow):
                 # Load the first frame
                 self.display_hdf5_image(0)
         except Exception as ex:
-            logging.error(f"Error: {ex} occurred")
+            print(f"Error: {ex} occurred")
 
     def change_dataset(self, index):
         """Change the dataset based on the combo box selection."""
@@ -245,12 +396,12 @@ class IMosflmApp(QMainWindow):
             frame_data = self.dataset[start_index:end_index, :, :]
 
             # Compute mean and standard deviation
-            #mean_val = np.mean(frame_data)
-            #std_val = np.std(frame_data)
+            # mean_val = np.mean(frame_data)
+            # std_val = np.std(frame_data)
 
             # Define 5σ clipping bounds
-            #lower_bound = mean_val - 5 * std_val
-            #upper_bound = mean_val + 5 * std_val
+            # lower_bound = mean_val - 5 * std_val
+            # upper_bound = mean_val + 5 * std_val
 
             # Clip data within 5σ range
             # frame_clipped = np.clip(frame_data, lower_bound, upper_bound)
@@ -305,7 +456,7 @@ class IMosflmApp(QMainWindow):
         except Exception as ex:
             logging.error(f"Error: {ex} occurred")
 
-    def show_image(self, image):
+    def show_image_without_rings(self, image):
         """ show_image """
         logging.info(f"show_image: {image}")
         try:
@@ -317,6 +468,39 @@ class IMosflmApp(QMainWindow):
             self.image_label.setPixmap(pixmap.scaled(self.image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
         except Exception as ex:
             logging.error(f"Error: {ex} occurred")
+
+    def show_image(self, image):
+        """Display the image with resolution rings."""
+        try:
+            logging.info(f"show_image received image: mode={image.mode}, size={image.size}")
+
+            # Ensure the image is in 'RGB' mode for display
+            if image.mode != "RGB":
+                image = image.convert("RGB")
+
+            width, height = image.size
+            data = image.tobytes("raw", "RGB")  # Ensure raw RGB format
+            qimage = QImage(data, width, height, 3 * width, QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(qimage)
+
+            # Draw resolution rings
+            painter = QPainter(pixmap)
+            pen = QPen(QColor(255, 0, 0), 2)  # Red color, 2 pixels wide
+            painter.setPen(pen)
+
+            # Use beam center for resolution rings
+            center = QPoint(int(self.beam_center[0]), int(self.beam_center[1]))
+            radii = [50, 100, 150, 200]  # Example radii, adjust as needed
+            for radius in radii:
+                painter.drawEllipse(center, radius, radius)
+
+            painter.end()
+
+            self.image_label.setPixmap(pixmap.scaled(self.image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+        except Exception as ex:
+            logging.error(f"Error in show_image: {ex}")
+
 
     def invert_image(self):
         """ invert_image """
@@ -365,6 +549,21 @@ class IMosflmApp(QMainWindow):
             super().resizeEvent(event)
         except Exception as ex:
             logging.error(f"Error: {ex} occurred")
+
+    def mouse_move_event(self, event):
+        if self.current_image and self.beam_center:
+            x = event.position().x()
+            y = event.position().y()
+            metadata = {
+                "beam_centre_x": self.beam_center[0],
+                "beam_centre_y": self.beam_center[1],
+                "detector_distance": self.detector_distance,
+                "incident_wavelength": self.incident_wavelength,
+                "x_pixel_size": self.x_pixel_size,
+                "y_pixel_size": self.y_pixel_size
+            }
+            theta, resolution = compute_theta_and_resolution(x, y, metadata)
+            self.resolution_label.setText(f"Resolution: {resolution:.2f} Å")
 
 
 def parse_arguments():
