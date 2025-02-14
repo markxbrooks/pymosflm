@@ -142,37 +142,24 @@ class IMosflmApp(tk.Tk):
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load CBF image: {e}")
 
-import h5py
-import numpy as np
-from PIL import Image, ImageTk
-import tkinter.messagebox as messagebox
+    def display_hdf5_image(self, image):
+        """Load and display the HDF5 image using FabIO."""
+        try:
+            #hdf5_image = fabio.open(image)
+            #data = hdf5_image.data
+            #image = Image.fromarray(data)
 
-def display_hdf5_image(self, image_path):
-    """Load and display an HDF5 image."""
-    try:
-        with h5py.File(image_path, "r") as f:
-            # Print available datasets
-            print("Available datasets:", list(f.keys()))
+            # Open the HDF5 file
+            with h5py.File(image, "r") as f:
+                # Explore dataset keys
+                print(list(f.keys()))
 
-            # Attempt to find an image dataset
-            dataset_path = "/entry/data/data"  # Change if necessary
-            if dataset_path not in f:
-                raise ValueError(f"Dataset '{dataset_path}' not found in {image_path}")
-
-            # Load image data
-            image_data = f[dataset_path][...]
-
-            # Convert to 8-bit grayscale image
-            image_data = np.array(image_data, dtype=np.uint8)
-            pil_image = Image.fromarray(image_data)
-
-            # Store and display the image
-            self.current_image = pil_image
+                # Load an image dataset (adjust key as needed)
+                image_data = f["/entry/data/data"][...]
+            self.current_image = image_data.convert("L")  # Convert to grayscale
             self.rescale_and_display(self.current_image)
-
-    except Exception as e:
-        messagebox.showerror("Error", f"Failed to load HDF5 image: {e}")
-
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load HDF5 image: {e}")
 
     def rescale_and_display(self, image):
         """Resize and display the image."""

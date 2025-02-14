@@ -50,42 +50,68 @@ def compute_theta_and_resolution(pixel_x, pixel_y, metadata):
     Compute the scattering angle (theta) and resolution at a given pixel.
 
     Parameters:
-        pixel_x (float): X-coordinate of the pixel
-        pixel_y (float): Y-coordinate of the pixel
-        metadata (dict): Dictionary containing extracted instrument parameters
+        pixel_x (float): X-coordinate of the pixel.
+        pixel_y (float): Y-coordinate of the pixel.
+        metadata (dict): Dictionary containing extracted instrument parameters.
 
     Returns:
-        theta (float): Scattering angle in degrees
-        resolution (float): Resolution in Ångstroms
+        tuple: (theta (float), resolution (float))
+            - theta: Scattering angle in degrees.
+            - resolution: Resolution in Ångstroms.
+
+    Raises:
+        ValueError: If any required metadata key is missing or if detector_distance is zero.
     """
-    # Extract required parameters
-    beam_center_x = metadata["beam_centre_x"]  # Beam center X (in pixels)
-    beam_center_y = metadata["beam_centre_y"]  # Beam center Y (in pixels)
-    detector_distance = metadata["detector_distance"][0]  # Distance in mm
-    wavelength = metadata["incident_wavelength"]  # X-ray wavelength in Å
-    pixel_size = metadata["x_pixel_size"]  # Pixel size in mm
+    logging.info("Computing theta and resolution for pixel (%s, %s)", pixel_x, pixel_y)
+
+    required_keys = ["beam_centre_x", "beam_centre_y", "detector_distance",
+                     "incident_wavelength", "x_pixel_size"]
+
+    # Ensure all required keys exist
+    for key in required_keys:
+        if key not in metadata:
+            logging.error("Missing required metadata key: %s", key)
+            raise ValueError(f"Missing required metadata key: {key}")
+
+    # Extract parameters
+    beam_center_x = metadata["beam_centre_x"]
+    beam_center_y = metadata["beam_centre_y"]
+    detector_distance = metadata["detector_distance"]
+    wavelength = metadata["incident_wavelength"]
+    pixel_size = metadata["x_pixel_size"]
+
+    logging.debug("Metadata extracted: Beam Center (%s, %s), Detector Distance: %s mm, Wavelength: %s Å, Pixel Size: %s mm",
+                  beam_center_x, beam_center_y, detector_distance, wavelength, pixel_size)
+
+    if detector_distance == 0:
+        logging.critical("Detector distance is zero! This will cause a division error.")
+        raise ValueError("Detector distance cannot be zero.")
 
     # Convert pixel coordinates to mm distances from beam center
     delta_x = (pixel_x - beam_center_x) * pixel_size
     delta_y = (pixel_y - beam_center_y) * pixel_size
+    logging.debug("Pixel offsets from beam center: ΔX = %s mm, ΔY = %s mm", delta_x, delta_y)
 
     # Compute R (distance from beam center to the pixel in mm)
-    R = np.sqrt(delta_x ** 2 + delta_y ** 2)
+    R = np.hypot(delta_x, delta_y)
+    logging.info("Computed radial distance R = %s mm", R)
 
     # Compute theta in radians
     theta_rad = np.arctan(R / detector_distance)
-
-    # Convert theta to degrees
     theta_deg = np.degrees(theta_rad)
+    logging.info("Computed scattering angle: θ = %s°", theta_deg)
 
     # Compute resolution using Bragg's Law
-    resolution = wavelength / (2 * np.sin(theta_rad))
+    if theta_rad == 0:
+        resolution = float('inf')
+        logging.warning("Theta is zero, resolution is set to infinity.")
+    else:
+        resolution = wavelength / (2 * np.sin(theta_rad))
+
+    logging.info("Computed resolution: %s Å", resolution)
 
     return theta_deg, resolution
 
-
-import h5py
-import numpy as np
 
 def extract_nx_class_and_omega(hdf5_path):
     """Extract and print NX_class and omega attributes from an HDF5 file, searching all levels."""
@@ -164,13 +190,19 @@ class IMosflmApp(QMainWindow):
         self.resolution_label = QLabel("Resolution: N/A")
         resolution_layout.addWidget(self.resolution_label)
 
+        self.beam_x_label = QLabel("beam_x: N/A")
+        resolution_layout.addWidget(self.beam_x_label)
+
+        self.beam_y_label = QLabel("beam_y: N/A")
+        resolution_layout.addWidget(self.beam_y_label)
+
         self.x_pixel_label = QLabel("x pixel: N/A")
         resolution_layout.addWidget(self.x_pixel_label)
 
         self.y_pixel_label = QLabel("y pixel: N/A")
         resolution_layout.addWidget(self.y_pixel_label)
 
-        self.theta_label= QLabel(f"theta: N/A radians")
+        self.theta_label= QLabel(f"theta: N/A degrees")
         resolution_layout.addWidget(self.theta_label)
 
         layout.addLayout(resolution_layout)
@@ -564,22 +596,40 @@ class IMosflmApp(QMainWindow):
 
     def mouse_move_event(self, event):
         if self.current_image and self.beam_center:
-            x = event.position().x()
-            y = event.position().y()
+            # Get display coordinates
+            x_display = event.position().x()
+            y_display = event.position().y()
+
+            # Calculate scaling factors
+            image_width = self.image_label.pixmap().width()
+            image_height = self.image_label.pixmap().height()
+            dataset_width = self.dataset.shape[2]  # Assuming dataset shape is (frames, height, width)
+            dataset_height = self.dataset.shape[1]
+
+            scale_x = dataset_width / image_width
+            scale_y = dataset_height / image_height
+
+            # Convert to dataset coordinates
+            x_dataset = x_display * scale_x
+            y_dataset = y_display * scale_y
+
+            # Update labels
+            self.x_pixel_label.setText(f"x pixel: {x_dataset:.0f}")
+            self.y_pixel_label.setText(f"y pixel: {y_dataset:.0f}")
+            self.beam_x_label.setText(f"beam_x: {self.beam_x:.0f}")
+            self.beam_y_label.setText(f"beam_y: {self.beam_y:.0f}")
+
+            # Compute resolution
             metadata = {
                 "beam_centre_x": self.beam_center[0],
                 "beam_centre_y": self.beam_center[1],
-                "detector_distance": self.detector_distance,
+                "detector_distance": self.detector_distance[0],  # Ensure this is a single value
                 "incident_wavelength": self.incident_wavelength,
-                "x_pixel_size": self.x_pixel_size,
-                "y_pixel_size": self.y_pixel_size
+                "x_pixel_size": self.x_pixel_size
             }
-            theta, resolution = compute_theta_and_resolution(x, y, metadata)
-            self.x_pixel_label.setText(f"x pixel: {x:.0f}")
-            self.y_pixel_label.setText(f"y pixel: {y:.0f}")
-            self.theta_label.setText(f"theta: {theta:.0f} radians")
-            self.resolution_label.setText(f"Resolution: {resolution:.2f} Å")
-            logging.info(f"mouse_move_event received metadata: {metadata}")
+            theta, resolution = compute_theta_and_resolution(x_dataset, y_dataset, metadata)
+            self.theta_label.setText(f"theta: {theta:0.2f} °")
+            self.resolution_label.setText(f"Resolution: {resolution:0.2f} Å")
 
 
 def parse_arguments():
