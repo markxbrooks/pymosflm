@@ -163,6 +163,16 @@ class IMosflmApp(QMainWindow):
         resolution_layout = QHBoxLayout()
         self.resolution_label = QLabel("Resolution: N/A")
         resolution_layout.addWidget(self.resolution_label)
+
+        self.x_pixel_label = QLabel("x pixel: N/A")
+        resolution_layout.addWidget(self.x_pixel_label)
+
+        self.y_pixel_label = QLabel("y pixel: N/A")
+        resolution_layout.addWidget(self.y_pixel_label)
+
+        self.theta_label= QLabel(f"theta: N/A radians")
+        resolution_layout.addWidget(self.theta_label)
+
         layout.addLayout(resolution_layout)
 
         # Dataset selection
@@ -345,11 +355,13 @@ class IMosflmApp(QMainWindow):
                     beam_centre_x = self.beam_x
                     beam_centre_y = self.beam_y
 
-                    if beam_centre_x is None or beam_centre_y is None:
-                        raise ValueError("Beam center coordinates not found.")
+                    #if beam_centre_x is None or beam_centre_y is None:
+                    #    raise ValueError("Beam center coordinates not found.")
                 else:
                     raise ValueError(f"Detector path '{detector_path}' not found.")
-
+                if beam_centre_x is None or beam_centre_y is None:
+                    raise ValueError("Beam center coordinates not found.")
+                    return
                 self.beam_center = (beam_centre_x, beam_centre_y)
 
                 # Populate the combo box with dataset names
@@ -563,7 +575,11 @@ class IMosflmApp(QMainWindow):
                 "y_pixel_size": self.y_pixel_size
             }
             theta, resolution = compute_theta_and_resolution(x, y, metadata)
+            self.x_pixel_label.setText(f"x pixel: {x:.0f}")
+            self.y_pixel_label.setText(f"y pixel: {y:.0f}")
+            self.theta_label.setText(f"theta: {theta:.0f} radians")
             self.resolution_label.setText(f"Resolution: {resolution:.2f} Å")
+            logging.info(f"mouse_move_event received metadata: {metadata}")
 
 
 def parse_arguments():
