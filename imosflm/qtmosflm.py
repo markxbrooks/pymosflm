@@ -62,7 +62,7 @@ def compute_theta_and_resolution(pixel_x, pixel_y, metadata):
     Raises:
         ValueError: If any required metadata key is missing or if detector_distance is zero.
     """
-    logging.info("Computing theta and resolution for pixel (%s, %s)", pixel_x, pixel_y)
+    logging.info(f"Computing theta and resolution for pixel {pixel_x:.0f}, {pixel_y:.0f}")
 
     required_keys = ["beam_centre_x", "beam_centre_y", "detector_distance",
                      "incident_wavelength", "x_pixel_size"]
@@ -94,12 +94,12 @@ def compute_theta_and_resolution(pixel_x, pixel_y, metadata):
 
     # Compute R (distance from beam center to the pixel in mm)
     R = np.hypot(delta_x, delta_y)
-    logging.info("Computed radial distance R = %s mm", R)
+    logging.info(f"Computed radial distance R: \t{R:.2f} mm")
 
     # Compute theta in radians
     theta_rad = np.arctan(R / detector_distance)
     theta_deg = np.degrees(theta_rad)
-    logging.info("Computed scattering angle: θ = %s°", theta_deg)
+    logging.info(f"Computed scattering angle: θ = \t{theta_deg:.1f}°")
 
     # Compute resolution using Bragg's Law
     if theta_rad == 0:
@@ -108,7 +108,7 @@ def compute_theta_and_resolution(pixel_x, pixel_y, metadata):
     else:
         resolution = wavelength / (2 * np.sin(theta_rad))
 
-    logging.info("Computed resolution: %s Å", resolution)
+    logging.info(f"Computed resolution: \t\t{resolution:.2f} Å", )
 
     return theta_deg, resolution
 
@@ -179,7 +179,7 @@ class IMosflmApp(QMainWindow):
         self.num_frames = 0
         self.slice_size = 10  # Number of frames to load at once
         self.beam_center = None
-
+        self.inverted_image = False
         # Main widget and layout
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
@@ -424,10 +424,19 @@ class IMosflmApp(QMainWindow):
             self.display_hdf5_image(0)
 
     def update_frame(self, start_index):
-        """ update_frame """
+        """ Update frame and apply current contrast level """
         if self.dataset is not None:
+            # Display the selected frame
             self.display_hdf5_image(start_index)
+            if self.inverted_image:
+                self.do_image_inversion()
+            # Apply contrast from the slider value
+            contrast_value = self.contrast_slider.value()  # Get current slider value
+            self.update_contrast(contrast_value)  # Apply contrast adjustment
+
+            # Update UI
             self.frame_label.setText(f"Frame: {start_index}")
+            logging.info(f"Frame {start_index} updated with contrast level {contrast_value}.")
 
     def display_hdf5_image(self, start_index):
         """Display a slice of frames from the HDF5 dataset with improved contrast and no white borders."""
@@ -435,70 +444,51 @@ class IMosflmApp(QMainWindow):
             if self.dataset is None:
                 raise ValueError("No dataset loaded.")
 
-            # Select the slice of frames
+            # Select frame slice
             end_index = min(start_index + self.slice_size, self.num_frames)
-            frame_data = self.dataset[start_index:end_index, :, :]
+            frame_data = np.array(self.dataset[start_index:end_index, :, :])  # Convert to NumPy array
 
-            # Compute mean and standard deviation
-            # mean_val = np.mean(frame_data)
-            # std_val = np.std(frame_data)
-
-            # Define 5σ clipping bounds
-            # lower_bound = mean_val - 5 * std_val
-            # upper_bound = mean_val + 5 * std_val
-
-            # Clip data within 5σ range
-            # frame_clipped = np.clip(frame_data, lower_bound, upper_bound)
-
-            # Normalize with percentile-based contrast enhancement
-            # p_low, p_high = np.percentile(frame_clipped, (2, 98))  # Adjust percentiles as needed
-            # frame_clipped = np.clip(frame_clipped, p_low, p_high)
-            # frame_stretched = (frame_clipped - p_low) / (p_high - p_low)  # Contrast stretch
-            # frame_normalized = (frame_stretched * 255).astype(np.uint8)
-
-            # Convert frames to NumPy array if not already
-            frame_data = np.array(frame_data)
-
-            # Convert to grayscale if needed
-            if frame_data.ndim == 3:  # Ensure it's a grayscale image
+            # Ensure grayscale format
+            if frame_data.ndim == 3:
                 gray = frame_data
             else:
                 gray = cv2.cvtColor(frame_data, cv2.COLOR_RGB2GRAY)
 
-            # Create a mask for non-white areas (assume white is near 255)
+            # Mask non-white areas (considering white as near 255)
             mask = gray < 240  # Pixels below 240 are considered part of the image
-
-            # Compute mean and standard deviation only for non-white areas
             valid_pixels = frame_data[mask]
+
+            # Compute statistics for contrast enhancement
             mean_val = np.mean(valid_pixels)
             std_val = np.std(valid_pixels)
-
-            # Exclude values outside 5 standard deviations
             lower_bound = mean_val - 5 * std_val
             upper_bound = mean_val + 5 * std_val
-            frame_filtered = np.clip(frame_data, lower_bound, upper_bound)
 
-            # Normalize the filtered data
-            p_low, p_high = np.percentile(frame_filtered[mask], (2, 98))  # Adjust percentiles as needed
-            frame_clipped = np.clip(frame_filtered, p_low, p_high)
-            frame_stretched = (frame_clipped - p_low) / (p_high - p_low)
-            frame_normalized = (frame_stretched * 255).astype(np.uint8)
+            # Clip and normalize pixel values
+            frame_clipped = np.clip(frame_data, lower_bound, upper_bound)
+            p_low, p_high = np.percentile(frame_clipped[mask], (2, 98))  # Percentile-based contrast adjustment
+            frame_normalized = np.clip((frame_clipped - p_low) / (p_high - p_low) * 255, 0, 255).astype(np.uint8)
 
             # Apply Adaptive Histogram Equalization (CLAHE)
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))  # Adjust clipLimit
-            enhanced_frames = [clahe.apply(frame) for frame in frame_normalized]
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            enhanced_frames = np.array([clahe.apply(frame) for frame in frame_normalized])
 
             # Apply Gamma Correction
-            gamma = 1.2  # Adjust this value as needed
-            gamma_corrected = [np.power(frame / 255.0, gamma) * 255 for frame in enhanced_frames]
-            gamma_corrected = [frame.astype(np.uint8) for frame in gamma_corrected]
+            gamma = 1.2  # Adjustable
+            gamma_corrected = np.power(enhanced_frames / 255.0, gamma) * 255
+            gamma_corrected = gamma_corrected.astype(np.uint8)
 
-            # Create a PIL image from the average of the processed slice
-            self.current_image = Image.fromarray(np.mean(gamma_corrected, axis=0).astype(np.uint8))
+            # Compute the average processed frame
+            final_frame = np.mean(gamma_corrected, axis=0).astype(np.uint8)
+
+            # Convert to PIL image for display
+            self.current_image = Image.fromarray(final_frame)
             self.show_image(self.current_image)
+
             logging.info(f"Frames {start_index} to {end_index} displayed successfully.")
+
         except Exception as ex:
-            logging.error(f"Error: {ex} occurred")
+            logging.error(f"Error in display_hdf5_image: {ex}")
 
     def show_image_without_rings(self, image):
         """ show_image """
@@ -545,28 +535,57 @@ class IMosflmApp(QMainWindow):
         except Exception as ex:
             logging.error(f"Error in show_image: {ex}")
 
-
     def invert_image(self):
-        """ invert_image """
-        logging.info(f"invert_image")
+        """Invert image using OpenCV for better performance"""
+        logging.info("invert_image")
+        self.inverted_image = not self.inverted_image
         if self.current_image:
             try:
-                inverted_image = ImageOps.invert(self.current_image.convert("RGB"))
+                self.do_image_inversion()
+            except Exception as ex:
+                logging.error(f"Error: {ex} occurred")
+
+    def do_image_inversion(self):
+        """Invert image using OpenCV for better performance"""
+        logging.info("do_image_inversion")
+        if self.current_image:
+            try:
+                img_array = np.array(self.current_image.convert("RGB"))  # Convert PIL to NumPy
+                inverted_array = cv2.bitwise_not(img_array)  # OpenCV's fast inversion
+                inverted_image = Image.fromarray(inverted_array)  # Convert back to PIL
+
                 self.current_image = inverted_image
                 self.show_image(inverted_image)
             except Exception as ex:
                 logging.error(f"Error: {ex} occurred")
 
     def update_contrast(self, value):
-        """ update_contrast """
+        """Update contrast using NumPy for better performance"""
         logging.info(f"update_contrast: {value}")
+
         if self.current_image:
-            contrast_factor = value / 100.0
-            enhancer = ImageEnhance.Contrast(self.current_image)
-            adjusted_image = enhancer.enhance(contrast_factor)
-            self.current_image = adjusted_image
-            self.show_image(adjusted_image)
-            self.contrast_label.setText(f"Contrast: {value}")
+            try:
+                contrast_factor = value / 100.0
+
+                # Convert PIL image to NumPy array
+                img_array = np.array(self.current_image.convert("RGB"), dtype=np.float32)
+
+                # Apply contrast adjustment
+                mean = np.mean(img_array, axis=(0, 1), keepdims=True)  # Compute mean per channel
+                adjusted_array = mean + contrast_factor * (img_array - mean)  # Contrast formula
+
+                # Clip values to ensure valid range
+                adjusted_array = np.clip(adjusted_array, 0, 255).astype(np.uint8)
+
+                # Convert back to PIL image
+                adjusted_image = Image.fromarray(adjusted_array)
+
+                # Update the UI
+                self.current_image = adjusted_image
+                self.show_image(adjusted_image)
+                self.contrast_label.setText(f"Contrast: {value}")
+            except Exception as ex:
+                logging.error(f"Error in update_contrast: {ex}")
 
     def show_histogram(self):
         """ show_histogram """
