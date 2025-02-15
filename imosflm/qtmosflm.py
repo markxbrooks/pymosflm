@@ -11,7 +11,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import h5py
-from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QPushButton, QTextEdit, QWidget, QComboBox
+from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QPushButton, QTextEdit, QWidget, QComboBox, QCheckBox
 from PySide6.QtGui import QImage, QPixmap, QPalette, QColor, QPainter, QPen
 from PySide6.QtCore import Qt, QSize, QPoint
 
@@ -20,6 +20,9 @@ import fabio  # Import FabIO
 import matplotlib.pyplot as plt
 import cv2
 import numpy as np
+from contourpy.chunk import two_factors
+from pefile import two_way_dict
+
 # from image_grouping import *
 
 # Set environment variables
@@ -45,7 +48,7 @@ if fastload:
     logging.debug("fastload mode: ON")
 
 
-def compute_theta_and_resolution(pixel_x, pixel_y, metadata):
+def compute_two_theta_and_resolution(pixel_x, pixel_y, metadata):
     """
     Compute the scattering angle (theta) and resolution at a given pixel.
 
@@ -62,7 +65,8 @@ def compute_theta_and_resolution(pixel_x, pixel_y, metadata):
     Raises:
         ValueError: If any required metadata key is missing or if detector_distance is zero.
     """
-    logging.info(f"Computing theta and resolution for pixel {pixel_x:.0f}, {pixel_y:.0f}")
+    logging.info("----------------------------------------")
+    logging.info(f"Computing theta and resolution for pixel \tx: {pixel_x:.0f}, y: {pixel_y:.0f}")
 
     required_keys = ["beam_centre_x", "beam_centre_y", "detector_distance",
                      "incident_wavelength", "x_pixel_size"]
@@ -94,23 +98,28 @@ def compute_theta_and_resolution(pixel_x, pixel_y, metadata):
 
     # Compute R (distance from beam center to the pixel in mm)
     R = np.hypot(delta_x, delta_y)
-    logging.info(f"Computed radial distance R: \t{R:.2f} mm")
+    logging.info(f"Computed radial distance: \t\t\t\tR = \t{R:.0f} mm")
 
     # Compute theta in radians
-    theta_rad = np.arctan(R / detector_distance)
-    theta_deg = np.degrees(theta_rad)
-    logging.info(f"Computed scattering angle: θ = \t{theta_deg:.1f}°")
+    two_theta_rad = calculate_two_theta_radians(R, detector_distance)
+    two_theta_deg = np.degrees(two_theta_rad)
+    logging.info(f"Computed scattering angle: \t\t\tθ = \t{two_theta_deg:.2f}°")
 
     # Compute resolution using Bragg's Law
-    if theta_rad == 0:
+    if two_theta_rad == 0:
         resolution = float('inf')
         logging.warning("Theta is zero, resolution is set to infinity.")
     else:
-        resolution = wavelength / (2 * np.sin(theta_rad))
+        resolution = wavelength / (2 * np.sin(two_theta_rad / 2 )) # two_theta / 2 = theta
+    logging.info(f"Computed resolution: \t\t\t\t\t{resolution:.2f} Å")
+    return two_theta_deg, resolution
 
-    logging.info(f"Computed resolution: \t\t{resolution:.2f} Å", )
 
-    return theta_deg, resolution
+def calculate_two_theta_radians(R, detector_distance):
+    """ calculate_two_theta """
+    logging.info(f"calculate_two_theta")
+    two_theta_rad = np.arctan(R / detector_distance)
+    return two_theta_rad
 
 
 def extract_nx_class_and_omega(hdf5_path):
@@ -179,7 +188,8 @@ class IMosflmApp(QMainWindow):
         self.num_frames = 0
         self.slice_size = 10  # Number of frames to load at once
         self.beam_center = None
-        self.inverted_image = False
+        self.image_inverted = False
+        self.show_rings = True  # Default to showing rings
         # Main widget and layout
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
@@ -202,10 +212,16 @@ class IMosflmApp(QMainWindow):
         self.y_pixel_label = QLabel("y pixel: N/A")
         resolution_layout.addWidget(self.y_pixel_label)
 
-        self.theta_label= QLabel(f"theta: N/A degrees")
-        resolution_layout.addWidget(self.theta_label)
+        self.two_theta_label= QLabel(f"two theta: N/A degrees")
+        resolution_layout.addWidget(self.two_theta_label)
 
         layout.addLayout(resolution_layout)
+
+        # Checkbox for resolution rings
+        self.rings_checkbox = QCheckBox("Show Resolution Rings")
+        self.rings_checkbox.setChecked(True)
+        self.rings_checkbox.stateChanged.connect(self.toggle_rings)
+        layout.addWidget(self.rings_checkbox)
 
         # Dataset selection
         dataset_layout = QHBoxLayout()
@@ -428,8 +444,7 @@ class IMosflmApp(QMainWindow):
         if self.dataset is not None:
             # Display the selected frame
             self.display_hdf5_image(start_index)
-            if self.inverted_image:
-                self.do_image_inversion()
+
             # Apply contrast from the slider value
             contrast_value = self.contrast_slider.value()  # Get current slider value
             self.update_contrast(contrast_value)  # Apply contrast adjustment
@@ -483,6 +498,10 @@ class IMosflmApp(QMainWindow):
 
             # Convert to PIL image for display
             self.current_image = Image.fromarray(final_frame)
+            if self.image_inverted:
+                self.do_invert_image()
+            contrast_value = self.contrast_slider.value()  # Get current slider value
+            self.update_contrast(contrast_value)  # Apply contrast adjustment
             self.show_image(self.current_image)
 
             logging.info(f"Frames {start_index} to {end_index} displayed successfully.")
@@ -505,64 +524,96 @@ class IMosflmApp(QMainWindow):
 
     def show_image(self, image):
         """Display the image with resolution rings."""
+        logging.info(f"show_image: {image}")
         try:
-            logging.info(f"show_image received image: mode={image.mode}, size={image.size}")
-
-            # Ensure the image is in 'RGB' mode for display
-            if image.mode != "RGB":
-                image = image.convert("RGB")
-
+            image = image.convert("RGB")
             width, height = image.size
-            data = image.tobytes("raw", "RGB")  # Ensure raw RGB format
+            data = image.tobytes("raw", "RGB")
             qimage = QImage(data, width, height, 3 * width, QImage.Format_RGB888)
             pixmap = QPixmap.fromImage(qimage)
 
-            # Draw resolution rings
-            painter = QPainter(pixmap)
-            pen = QPen(QColor(255, 0, 0), 2)  # Red color, 2 pixels wide
-            painter.setPen(pen)
+            if self.show_rings:
+                # Draw resolution rings
+                painter = QPainter(pixmap)
+                pen = QPen(QColor(255, 0, 0), 2)  # Red color, 2 pixels wide
+                painter.setPen(pen)
+                font = painter.font()
+                font.setPointSize(60)
+                painter.setFont(font)
 
-            # Use beam center for resolution rings
-            center = QPoint(int(self.beam_center[0]), int(self.beam_center[1]))
-            radii = [50, 100, 150, 200]  # Example radii, adjust as needed
-            for radius in radii:
-                painter.drawEllipse(center, radius, radius)
+                # Calculate radii for resolution rings
+                resolutions = [1.0, 2.0, 3.0]  # Ångströms
+                radii = []
+                for resolution in resolutions:
+                    two_theta_rad = np.arcsin(self.incident_wavelength / (2 * resolution))
+                    R_mm = self.detector_distance * np.tan(two_theta_rad * 2)
+                    R_pixels = R_mm / self.x_pixel_size
+                    radii.append(R_pixels)
 
-            painter.end()
+                # Use beam center for resolution rings
+                center = QPoint(int(self.beam_center[0]), int(self.beam_center[1]))
+
+                for i, radius in enumerate(radii):
+                    painter.drawEllipse(center, int(radius), int(radius))
+                    # Draw label
+                    label_pos = QPoint(center.x() + int(radius) + 5, center.y())
+                    painter.drawText(label_pos, f"{resolutions[i]} Å")
+
+                painter.end()
 
             self.image_label.setPixmap(pixmap.scaled(self.image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
-
         except Exception as ex:
-            logging.error(f"Error in show_image: {ex}")
+            logging.error(f"Error: {ex} occurred")
+
+    def get_origin_resolution(self, painter, center, radii):
+        """ 
+        get_origin_resolution 
+        get the resolution at the origin
+        """
+        logging.info(f"get_origin_resolution")
+        origin  = (0, 0)
+        metadata = {
+            "beam_centre_x": self.beam_center[0],
+            "beam_centre_y": self.beam_center[1],
+            "detector_distance": self.detector_distance,
+            "incident_wavelength": self.incident_wavelength,
+            "x_pixel_size": self.x_pixel_size
+        }
+        self.get_resolution(origin, metadata)
+
+    def get_resolution(self, point, metadata):
+        """ get_resolution """
+        logging.info(f"get_resolution")
+        self.compute_theta_and_resolution(point[0], point[1], metadata)
 
     def invert_image(self):
-        """Invert image using OpenCV for better performance"""
-        logging.info("invert_image")
-        self.inverted_image = not self.inverted_image
+        """Invert the image."""
+        logging.info(f"invert_image")
+        if not self.image_inverted:
+            self.image_inverted = True
+        else:
+            self.image_inverted = False
+
         if self.current_image:
             try:
-                self.do_image_inversion()
+                self.do_invert_image()
             except Exception as ex:
                 logging.error(f"Error: {ex} occurred")
 
-    def do_image_inversion(self):
-        """Invert image using OpenCV for better performance"""
-        logging.info("do_image_inversion")
+    def do_invert_image(self):
+        """Perform image inversion."""
+        logging.info(f"do_invert_image")
         if self.current_image:
             try:
-                img_array = np.array(self.current_image.convert("RGB"))  # Convert PIL to NumPy
-                inverted_array = cv2.bitwise_not(img_array)  # OpenCV's fast inversion
-                inverted_image = Image.fromarray(inverted_array)  # Convert back to PIL
-
+                inverted_image = ImageOps.invert(self.current_image.convert("RGB"))
                 self.current_image = inverted_image
                 self.show_image(inverted_image)
             except Exception as ex:
                 logging.error(f"Error: {ex} occurred")
 
     def update_contrast(self, value):
-        """Update contrast using NumPy for better performance"""
+        """Update contrast using NumPy for better performance."""
         logging.info(f"update_contrast: {value}")
-
         if self.current_image:
             try:
                 contrast_factor = value / 100.0
@@ -646,9 +697,16 @@ class IMosflmApp(QMainWindow):
                 "incident_wavelength": self.incident_wavelength,
                 "x_pixel_size": self.x_pixel_size
             }
-            theta, resolution = compute_theta_and_resolution(x_dataset, y_dataset, metadata)
-            self.theta_label.setText(f"theta: {theta:0.2f} °")
+            two_theta, resolution = compute_two_theta_and_resolution(x_dataset, y_dataset, metadata)
+            self.two_theta_label.setText(f"two theta: {two_theta:0.2f} °")
             self.resolution_label.setText(f"Resolution: {resolution:0.2f} Å")
+
+    def toggle_rings(self, state):
+        """ Toggle the visibility of rings on the image """
+        self.show_rings = state == Qt.CheckState.Checked
+        logging.info(f"Toggle rings: {'ON' if self.show_rings else 'OFF'}")
+        if self.current_image:
+            self.show_image(self.current_image)  # Refresh display with/without rings
 
 
 def parse_arguments():
