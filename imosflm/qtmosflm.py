@@ -20,6 +20,9 @@ import fabio  # Import FabIO
 import matplotlib.pyplot as plt
 import cv2
 import numpy as np
+from contourpy.chunk import two_factors
+from pefile import two_way_dict
+
 # from image_grouping import *
 
 # Set environment variables
@@ -97,20 +100,20 @@ def compute_theta_and_resolution(pixel_x, pixel_y, metadata):
     logging.info("Computed radial distance R = %s mm", R)
 
     # Compute theta in radians
-    theta_rad = np.arctan(R / detector_distance)
-    theta_deg = np.degrees(theta_rad)
-    logging.info("Computed scattering angle: θ = %s°", theta_deg)
+    two_theta_rad = np.arctan(R / detector_distance)
+    two_theta_deg = np.degrees(two_theta_rad)
+    logging.info("Computed scattering angle: θ = %s°", two_theta_deg)
 
     # Compute resolution using Bragg's Law
-    if theta_rad == 0:
+    if two_theta_rad == 0:
         resolution = float('inf')
         logging.warning("Theta is zero, resolution is set to infinity.")
     else:
-        resolution = wavelength / (2 * np.sin(theta_rad))
+        resolution = wavelength / (2 * np.sin(two_theta_rad / 2 )) # two_theta / 2 = theta
 
     logging.info("Computed resolution: %s Å", resolution)
 
-    return theta_deg, resolution
+    return two_theta_deg, resolution
 
 
 def extract_nx_class_and_omega(hdf5_path):
