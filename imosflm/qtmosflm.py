@@ -165,6 +165,40 @@ def extract_nx_class_and_omega(hdf5_path):
         logging.info(f"Error: {ex} occurred")
 
 
+def add_resolution_rings(image, beam_center, detector_distance, x_pixel_size, incident_wavelength, show_rings=True):
+    """Display the image with resolution rings using OpenCV and PIL."""
+    try:
+        image = image.convert("RGB")  # Ensure it's RGB mode
+        img_np = np.array(image)  # Convert to NumPy array for OpenCV processing
+
+        if show_rings:
+            # Define resolution values in Ångströms
+            resolutions = [1.0, 2.0, 3.0]
+            radii = []
+
+            # Compute radii for resolution rings
+            for resolution in resolutions:
+                two_theta_rad = np.arcsin(incident_wavelength / (2 * resolution))
+                R_mm = detector_distance * np.tan(two_theta_rad * 2)
+                R_pixels = int(R_mm / x_pixel_size)  # Convert to pixels
+                radii.append(R_pixels)
+
+            # Draw resolution rings using OpenCV
+            center = (int(beam_center[0]), int(beam_center[1]))
+            for i, radius in enumerate(radii):
+                cv2.circle(img_np, center, radius, (255, 0, 0), 2)  # Draw red rings
+                label_position = (center[0] + radius + 5, center[1])
+                cv2.putText(img_np, f"{resolutions[i]} Å", label_position,
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
+
+        # Convert back to PIL for displaying or saving
+        result_image = Image.fromarray(img_np)
+        return result_image  # You can save or display it using result_image.show()
+
+    except Exception as ex:
+        print(f"Error: {ex} occurred")
+
+
 class IMosflmApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -516,7 +550,7 @@ class IMosflmApp(QMainWindow):
         except Exception as ex:
             logging.error(f"Error: {ex} occurred")
 
-    def show_image(self, image):
+    def show_image_png_rings(self, image):
         """Display the image with resolution rings."""
         try:
             logging.info(f"show_image received image: mode={image.mode}, size={image.size}")
@@ -525,28 +559,61 @@ class IMosflmApp(QMainWindow):
             if image.mode != "RGB":
                 image = image.convert("RGB")
 
-            width, height = image.size
-            data = image.tobytes("raw", "RGB")  # Ensure raw RGB format
-            qimage = QImage(data, width, height, 3 * width, QImage.Format_RGB888)
+
+            annotated_image = add_resolution_rings(image, self.beam_center, self.detector_distance[0], self.x_pixel_size, self.incident_wavelength)
+
+            width, height = annotated_image.size
+            image_data = annotated_image.tobytes("raw", "RGB")  # Ensure raw RGB format
+            qimage = QImage(image_data, width, height, 3 * width, QImage.Format_RGB888)
             pixmap = QPixmap.fromImage(qimage)
-
-            # Draw resolution rings
-            painter = QPainter(pixmap)
-            pen = QPen(QColor(255, 0, 0), 2)  # Red color, 2 pixels wide
-            painter.setPen(pen)
-
-            # Use beam center for resolution rings
-            center = QPoint(int(self.beam_center[0]), int(self.beam_center[1]))
-            radii = [50, 100, 150, 200]  # Example radii, adjust as needed
-            for radius in radii:
-                painter.drawEllipse(center, radius, radius)
-
-            painter.end()
-
             self.image_label.setPixmap(pixmap.scaled(self.image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
         except Exception as ex:
             logging.error(f"Error in show_image: {ex}")
+
+
+    def show_image(self, image):
+        """Display the image with resolution rings."""
+        logging.info(f"show_image: {image}")
+        try:
+            image = image.convert("RGB")
+            width, height = image.size
+            data = image.tobytes("raw", "RGB")
+            qimage = QImage(data, width, height, 3 * width, QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(qimage)
+
+            if self.show_rings:
+                # Draw resolution rings
+                painter = QPainter(pixmap)
+                pen = QPen(QColor(255, 0, 0), 2)  # Red color, 2 pixels wide
+                painter.setPen(pen)
+                font = painter.font()
+                font.setPointSize(60)
+                painter.setFont(font)
+
+                # Calculate radii for resolution rings
+                resolutions = [1.0, 2.0, 3.0]  # Ångströms
+                radii = []
+                for resolution in resolutions:
+                    two_theta_rad = np.arcsin(self.incident_wavelength / (2 * resolution))
+                    R_mm = self.detector_distance * np.tan(two_theta_rad * 2)
+                    R_pixels = R_mm / self.x_pixel_size
+                    radii.append(R_pixels)
+
+                # Use beam center for resolution rings
+                center = QPoint(int(self.beam_center[0]), int(self.beam_center[1]))
+
+                for i, radius in enumerate(radii):
+                    painter.drawEllipse(center, int(radius), int(radius))
+                    # Draw label
+                    label_pos = QPoint(center.x() + int(radius) + 5, center.y())
+                    painter.drawText(label_pos, f"{resolutions[i]} Å")
+
+                painter.end()
+
+            self.image_label.setPixmap(pixmap.scaled(self.image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        except Exception as ex:
+            logging.error(f"Error: {ex} occurred")
 
 
     def invert_image(self):
