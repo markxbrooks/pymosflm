@@ -42,15 +42,6 @@ You can open diffraction images in **CBF** or **HDF5** format using the open but
 - Enhance **UI/UX** with better contrast controls and histogram equalization.
 - Enable integration with existing crystallographic software pipelines.
 
-## Contributing
-
-Contributions are welcome! Feel free to open issues or submit pull requests.
-
-## License
-
-MIT
-
----
 
 This project is in active development—stay tuned for updates!
 
