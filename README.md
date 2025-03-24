@@ -25,6 +25,21 @@ cd pymosflm
 pip install -r requirements.txt
 ```
 
+### Dependencies
+Ensure you have the following dependencies installed:
+
+- Python 3.8+
+- `numpy`
+- `h5py`
+- `fabio`
+- `matplotlib`
+- `pycbf` (optional, for enhanced CBF handling)
+
+You can also install the required dependencies using:
+```sh
+pip install numpy h5py fabio matplotlib
+```
+
 ## Usage
 
 Run the GUI with:
@@ -45,43 +60,6 @@ You can open diffraction images in **CBF** or **HDF5** format using the open but
 
 This project is in active development—stay tuned for updates!
 
-### Dependencies
-Ensure you have the following dependencies installed:
-
-- Python 3.8+
-- `numpy`
-- `h5py`
-- `fabio`
-- `matplotlib`
-- `pycbf` (optional, for enhanced CBF handling)
-
-You can install the required dependencies using:
-```sh
-pip install numpy h5py fabio matplotlib
-```
-
-## Usage
-
-To open a crystallographic file:
-```python
-from pymosflm import loader
-
-image = loader.open_file("example.cbf")
-image.show()
-```
-
-For HDF5 files:
-```python
-image = loader.open_file("example.h5")
-image.show()
-```
-
-## Roadmap
-
-- **Improve file loading speed**: Optimize handling of large HDF5 datasets.
-- **Implement data processing**: Integrate data reduction and processing capabilities.
-- **GUI support**: Add a graphical interface for visualization and processing.
-- **Additional format support**: Expand support for other crystallographic formats.
 
 ## Contributions
 
