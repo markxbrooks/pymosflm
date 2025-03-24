@@ -54,23 +54,6 @@ MIT
 
 This project is in active development—stay tuned for updates!
 
-# pymosflm
-
-A Python port of the famous crystallographic application **Mosflm**.
-
-## Overview
-
-`pymosflm` is a Python-based tool designed for handling crystallographic image formats, particularly CBF and HDF5 files. While it currently supports file loading, development is ongoing to implement full data processing capabilities.
-
-![mxlib.jpg](resources%2Fscreenshot1.png)
-
-## Features
-
-- Open and visualize **CBF** (Crystallographic Binary Format) and **HDF5** files.
-- Basic metadata extraction from crystallographic images.
-- Work in progress towards full data processing capabilities.
-
-
 ### Dependencies
 Ensure you have the following dependencies installed:
 
