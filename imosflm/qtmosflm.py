@@ -20,8 +20,8 @@ import fabio  # Import FabIO
 import matplotlib.pyplot as plt
 import cv2
 import numpy as np
-from contourpy.chunk import two_factors
-from pefile import two_way_dict
+# from contourpy.chunk import two_factors
+# from pefile import two_way_dict
 
 # from image_grouping import *
 
