@@ -18,7 +18,7 @@ Ensure you have Python 3.9+ installed, then clone the repository and install dep
 
 ```sh
 # Clone the repository
-git clone https://github.com/yourusername/pymosflm.git
+git clone https://github.com/markxbrooks/pymosflm.git
 cd pymosflm
 
 # Install dependencies
@@ -30,10 +30,10 @@ pip install -r requirements.txt
 Run the GUI with:
 
 ```sh
-python main.py
+python imosflm/qtmosflm.py
 ```
 
-You can open diffraction images in **CBF** or **HDF5** format using the file menu.
+You can open diffraction images in **CBF** or **HDF5** format using the open button.
 
 ## Roadmap
 - Improve **HDF5** file loading speed.
