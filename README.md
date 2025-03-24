@@ -7,7 +7,7 @@
 ![Screenshot](resources/screenshot1.png)
 
 ## Features
-- Load and display **CBF** and **HDF5** crystallographic images.
+- Load and display **CBF** and **HDF5**, **TIFF** crystallographic images (most images actually, e.g. **JPEG**, **PNG**, etc. ...).
 - Basic image contrast adjustments.
 - Interactive visualization with PySide6.
 - Support for resolution ring overlays.
