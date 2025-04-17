@@ -409,7 +409,7 @@ class IMosflmApp(QMainWindow):
                 except Exception as e:
                     logging.info(f"Could not read {full_path}: {e}")
 
-    def extract_instrument_metadata(self, hdf5_path):
+    def extract_instrument_metadata_old(self, hdf5_path):
         """Recursively extract and print all metadata from /entry/instrument in an HDF5 file."""
         try:
             with h5py.File(hdf5_path, "r") as f:
@@ -423,6 +423,24 @@ class IMosflmApp(QMainWindow):
 
         except Exception as ex:
             logging.info(f"Error: {ex} occurred")
+
+    def extract_instrument_metadata(self, hdf5_path):
+        """Recursively extract and print all metadata from /entry/instrument in an HDF5 file."""
+        if not os.path.isfile(hdf5_path):
+            logging.error(f"File '{hdf5_path}' does not exist or is not a file.")
+            return
+
+        try:
+            with h5py.File(hdf5_path, "r") as f:
+                instrument_path = "/entry/instrument"
+
+                if instrument_path in f:
+                    logging.info(f"\n--- Extracting Metadata from {instrument_path} ---")
+                    self.parse_hdf5(f[instrument_path], instrument_path)
+                else:
+                    logging.warning(f"Path '{instrument_path}' not found in the HDF5 file.")
+        except Exception as ex:
+            logging.error(f"Error opening or parsing HDF5 file '{hdf5_path}': {ex}")
 
     def display_cbf_image(self, file_path):
         """ display_cbf_image """
